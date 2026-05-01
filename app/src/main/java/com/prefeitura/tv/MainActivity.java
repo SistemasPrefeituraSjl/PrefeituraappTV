@@ -36,8 +36,6 @@ public class MainActivity extends Activity {
 
     private static final String SESSION_URL =
             "https://sistemasprefeiturasjl.github.io/TV/session.json";
-    private static final int MAX_RETRIES = 15;
-    private static final long RETRY_DELAY_MS = 4000;
 
     private View loginView;
     private View playerView;
@@ -51,12 +49,10 @@ public class MainActivity extends Activity {
     private String lastStreamUrl = "";
     private boolean frozen = false;
     private boolean triedSoftware = false;
-    private int retryCount = 0;
-    private boolean retrying = false;
+    private int errorCount = 0;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private Runnable pollRunnable;
-    private Runnable retryRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -113,11 +109,7 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                runOnUiThread(() -> {
-                    retryCount = 0;
-                    retrying = false;
-                    startPlayer(streamUrl);
-                });
+                runOnUiThread(() -> startPlayer(streamUrl));
             } catch (Exception e) {
                 runOnUiThread(() -> showMessage(
                         "Erro ao conectar: " + e.getMessage(), true));
@@ -132,15 +124,13 @@ public class MainActivity extends Activity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void startPlayer(String streamUrl) {
-        stopPlayer();
         lastStreamUrl = streamUrl;
         loginView.setVisibility(View.GONE);
         playerView.setVisibility(View.VISIBLE);
-        loadingText.setText("Carregando...");
         loadingText.setVisibility(View.VISIBLE);
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(5000, 30000, 2000, 4000)
+                .setBufferDurationsMs(2000, 8000, 500, 1000)
                 .build();
 
         ExoPlayer.Builder builder = new ExoPlayer.Builder(this)
@@ -163,13 +153,9 @@ public class MainActivity extends Activity {
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) {
                     loadingText.setVisibility(View.GONE);
-                    retryCount = 0;
-                    retrying = false;
+                    errorCount = 0;
                 } else if (state == Player.STATE_BUFFERING) {
-                    if (!retrying) {
-                        loadingText.setText("Carregando...");
-                        loadingText.setVisibility(View.VISIBLE);
-                    }
+                    loadingText.setVisibility(View.VISIBLE);
                 }
             }
 
@@ -177,58 +163,35 @@ public class MainActivity extends Activity {
             public void onPlayerError(PlaybackException error) {
                 if (!triedSoftware) {
                     triedSoftware = true;
+                    stopPlayer();
                     startPlayer(lastStreamUrl);
                     return;
                 }
-                retrySource();
+                if (errorCount < 2) {
+                    errorCount++;
+                    stopPlayer();
+                    handler.postDelayed(() -> startPlayer(lastStreamUrl), 2000);
+                    return;
+                }
+                errorCount = 0;
+                goBack();
+                triedSoftware = false;
+                showMessage("Erro: " + error.getMessage(), true);
             }
         });
 
-        loadSource(streamUrl);
-        startPolling();
-    }
-
-    @OptIn(markerClass = UnstableApi.class)
-    private void loadSource(String streamUrl) {
-        if (player == null) return;
         HlsMediaSource hlsSource = new HlsMediaSource.Factory(
                 new DefaultHttpDataSource.Factory()
-                        .setConnectTimeoutMs(15000)
-                        .setReadTimeoutMs(15000)
+                        .setConnectTimeoutMs(10000)
+                        .setReadTimeoutMs(10000)
                         .setAllowCrossProtocolRedirects(true)
         ).createMediaSource(MediaItem.fromUri(Uri.parse(streamUrl)));
 
         player.setMediaSource(hlsSource);
         player.setPlayWhenReady(true);
         player.prepare();
-    }
 
-    private void retrySource() {
-        if (retryCount >= MAX_RETRIES) {
-            goBack();
-            showMessage("Conexao perdida. Tente novamente.", true);
-            retryCount = 0;
-            retrying = false;
-            return;
-        }
-        retryCount++;
-        retrying = true;
-        loadingText.setText("Reconectando... (" + retryCount + "/" + MAX_RETRIES + ")");
-        loadingText.setVisibility(View.VISIBLE);
-
-        cancelRetry();
-        retryRunnable = () -> {
-            if (player == null || lastStreamUrl.isEmpty()) return;
-            loadSource(lastStreamUrl);
-        };
-        handler.postDelayed(retryRunnable, RETRY_DELAY_MS);
-    }
-
-    private void cancelRetry() {
-        if (retryRunnable != null) {
-            handler.removeCallbacks(retryRunnable);
-            retryRunnable = null;
-        }
+        startPolling();
     }
 
     private void startPolling() {
@@ -270,7 +233,6 @@ public class MainActivity extends Activity {
     }
 
     private void stopPlayer() {
-        cancelRetry();
         stopPolling();
         if (player != null) {
             player.release();
@@ -282,7 +244,6 @@ public class MainActivity extends Activity {
         stopPlayer();
         playerView.setVisibility(View.GONE);
         loadingText.setVisibility(View.GONE);
-        loadingText.setText("Carregando...");
         loginView.setVisibility(View.VISIBLE);
         codeInput.requestFocus();
     }
@@ -311,8 +272,8 @@ public class MainActivity extends Activity {
 
     private String httpGet(String urlStr) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-        conn.setConnectTimeout(15000);
-        conn.setReadTimeout(15000);
+        conn.setConnectTimeout(10000);
+        conn.setReadTimeout(10000);
         try {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(conn.getInputStream()));
