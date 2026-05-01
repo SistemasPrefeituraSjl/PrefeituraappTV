@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <!-- Login -->
+    <LinearLayout
+        android:id="@+id/loginView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:orientation="vertical"
+        android:background="#0a0a0a">
+
+        <LinearLayout
+            android:layout_width="420dp"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="36dp"
+            android:background="@drawable/card_bg">
+
+            <ImageView
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:src="@drawable/brasao"
+                android:scaleType="fitCenter"
+                android:layout_marginBottom="10dp"
+                android:contentDescription="@string/app_name" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="PREFEITURA MUNICIPAL DE\nSÃO JOSÉ DA LAPA/MG"
+                android:textColor="#0ea043"
+                android:textSize="11sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:letterSpacing="0.05"
+                android:layout_marginBottom="12dp" />
+
+            <View
+                android:layout_width="50dp"
+                android:layout_height="3dp"
+                android:background="#0b7f33"
+                android:layout_marginBottom="18dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Digite o código"
+                android:textColor="#ffffff"
+                android:textSize="22sp"
+                android:fontFamily="sans-serif-medium"
+                android:layout_marginBottom="18dp" />
+
+            <EditText
+                android:id="@+id/codeInput"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:hint="000000"
+                android:textColor="#ffffff"
+                android:textColorHint="#444444"
+                android:background="@drawable/input_bg"
+                android:padding="12dp"
+                android:textSize="24sp"
+                android:fontFamily="sans-serif-medium"
+                android:gravity="center"
+                android:letterSpacing="0.3"
+                android:inputType="number"
+                android:maxLength="6"
+                android:imeOptions="actionGo"
+                android:singleLine="true"
+                android:layout_marginBottom="14dp"
+                android:focusable="true"
+                android:focusableInTouchMode="true" />
+
+            <Button
+                android:id="@+id/connectBtn"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="Conectar"
+                android:textColor="#ffffff"
+                android:textSize="15sp"
+                android:fontFamily="sans-serif-medium"
+                android:background="@drawable/btn_bg"
+                android:focusable="true" />
+
+            <TextView
+                android:id="@+id/messageText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Aguardando transmissão."
+                android:textColor="#777777"
+                android:textSize="12sp"
+                android:layout_marginTop="14dp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Player -->
+    <FrameLayout
+        android:id="@+id/playerView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:visibility="gone">
+
+        <androidx.media3.ui.PlayerView
+            android:id="@+id/exoPlayerView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000" />
+    </FrameLayout>
+</FrameLayout>
