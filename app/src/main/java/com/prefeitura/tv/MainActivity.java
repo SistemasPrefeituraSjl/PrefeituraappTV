@@ -36,6 +36,8 @@ public class MainActivity extends Activity {
 
     private static final String SESSION_URL =
             "https://sistemasprefeiturasjl.github.io/TV/session.json";
+    private static final int MAX_RETRIES = 10;
+    private static final long RETRY_DELAY_MS = 3000;
 
     private View loginView;
     private View playerView;
@@ -49,6 +51,7 @@ public class MainActivity extends Activity {
     private String lastStreamUrl = "";
     private boolean frozen = false;
     private boolean triedSoftware = false;
+    private int retryCount = 0;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private Runnable pollRunnable;
@@ -100,7 +103,6 @@ public class MainActivity extends Activity {
                 String streamPath = session.optString("stream_path", "/hls/stream.m3u8");
                 String streamUrl = serverUrl + streamPath;
 
-                // Verify stream is reachable before playing
                 try {
                     httpGet(streamUrl);
                 } catch (Exception ve) {
@@ -109,7 +111,10 @@ public class MainActivity extends Activity {
                     return;
                 }
 
-                runOnUiThread(() -> startPlayer(streamUrl));
+                runOnUiThread(() -> {
+                    retryCount = 0;
+                    startPlayer(streamUrl);
+                });
             } catch (Exception e) {
                 runOnUiThread(() -> showMessage(
                         "Erro ao conectar: " + e.getMessage(), true));
@@ -124,13 +129,14 @@ public class MainActivity extends Activity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void startPlayer(String streamUrl) {
+        stopPlayer();
         lastStreamUrl = streamUrl;
         loginView.setVisibility(View.GONE);
         playerView.setVisibility(View.VISIBLE);
         loadingText.setVisibility(View.VISIBLE);
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(2000, 8000, 500, 1000)
+                .setBufferDurationsMs(3000, 15000, 1000, 2000)
                 .build();
 
         ExoPlayer.Builder builder = new ExoPlayer.Builder(this)
@@ -153,6 +159,7 @@ public class MainActivity extends Activity {
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) {
                     loadingText.setVisibility(View.GONE);
+                    retryCount = 0;
                 } else if (state == Player.STATE_BUFFERING) {
                     loadingText.setVisibility(View.VISIBLE);
                 }
@@ -162,20 +169,17 @@ public class MainActivity extends Activity {
             public void onPlayerError(PlaybackException error) {
                 if (!triedSoftware) {
                     triedSoftware = true;
-                    stopPlayer();
                     startPlayer(lastStreamUrl);
                     return;
                 }
-                goBack();
-                triedSoftware = false;
-                showMessage("Erro: " + error.getMessage(), true);
+                retryReconnect();
             }
         });
 
         HlsMediaSource hlsSource = new HlsMediaSource.Factory(
                 new DefaultHttpDataSource.Factory()
-                        .setConnectTimeoutMs(10000)
-                        .setReadTimeoutMs(10000)
+                        .setConnectTimeoutMs(15000)
+                        .setReadTimeoutMs(15000)
                         .setAllowCrossProtocolRedirects(true)
         ).createMediaSource(MediaItem.fromUri(Uri.parse(streamUrl)));
 
@@ -184,6 +188,22 @@ public class MainActivity extends Activity {
         player.prepare();
 
         startPolling();
+    }
+
+    private void retryReconnect() {
+        if (retryCount >= MAX_RETRIES) {
+            goBack();
+            showMessage("Conexao perdida. Tente novamente.", true);
+            retryCount = 0;
+            return;
+        }
+        retryCount++;
+        loadingText.setText("Reconectando... (" + retryCount + "/" + MAX_RETRIES + ")");
+        loadingText.setVisibility(View.VISIBLE);
+        handler.postDelayed(() -> {
+            if (lastStreamUrl.isEmpty()) return;
+            startPlayer(lastStreamUrl);
+        }, RETRY_DELAY_MS);
     }
 
     private void startPolling() {
@@ -236,6 +256,7 @@ public class MainActivity extends Activity {
         stopPlayer();
         playerView.setVisibility(View.GONE);
         loadingText.setVisibility(View.GONE);
+        loadingText.setText("Carregando...");
         loginView.setVisibility(View.VISIBLE);
         codeInput.requestFocus();
     }
@@ -264,8 +285,8 @@ public class MainActivity extends Activity {
 
     private String httpGet(String urlStr) throws Exception {
         HttpURLConnection conn = (HttpURLConnection) new URL(urlStr).openConnection();
-        conn.setConnectTimeout(10000);
-        conn.setReadTimeout(10000);
+        conn.setConnectTimeout(15000);
+        conn.setReadTimeout(15000);
         try {
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(conn.getInputStream()));
