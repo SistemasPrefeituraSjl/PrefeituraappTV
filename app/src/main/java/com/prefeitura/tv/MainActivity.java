@@ -13,8 +13,13 @@ import android.widget.TextView;
 
 import androidx.annotation.OptIn;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.PlaybackException;
+import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
+import androidx.media3.datasource.DefaultHttpDataSource;
+import androidx.media3.exoplayer.DefaultLoadControl;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.exoplayer.hls.HlsMediaSource;
 import androidx.media3.ui.PlayerView;
 
 import org.json.JSONObject;
@@ -35,6 +40,7 @@ public class MainActivity extends Activity {
     private View playerView;
     private EditText codeInput;
     private TextView messageText;
+    private TextView loadingText;
     private PlayerView exoPlayerView;
     private ExoPlayer player;
 
@@ -53,6 +59,7 @@ public class MainActivity extends Activity {
         playerView = findViewById(R.id.playerView);
         codeInput = findViewById(R.id.codeInput);
         messageText = findViewById(R.id.messageText);
+        loadingText = findViewById(R.id.loadingText);
         exoPlayerView = findViewById(R.id.exoPlayerView);
 
         findViewById(R.id.connectBtn).setOnClickListener(v -> connect());
@@ -107,12 +114,44 @@ public class MainActivity extends Activity {
     private void startPlayer(String streamUrl) {
         loginView.setVisibility(View.GONE);
         playerView.setVisibility(View.VISIBLE);
+        loadingText.setVisibility(View.VISIBLE);
 
-        player = new ExoPlayer.Builder(this).build();
+        DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
+                .setBufferDurationsMs(2000, 8000, 500, 1000)
+                .build();
+
+        player = new ExoPlayer.Builder(this)
+                .setLoadControl(loadControl)
+                .build();
+
         exoPlayerView.setPlayer(player);
         exoPlayerView.setUseController(false);
 
-        player.setMediaItem(MediaItem.fromUri(Uri.parse(streamUrl)));
+        player.addListener(new Player.Listener() {
+            @Override
+            public void onPlaybackStateChanged(int state) {
+                if (state == Player.STATE_READY) {
+                    loadingText.setVisibility(View.GONE);
+                } else if (state == Player.STATE_BUFFERING) {
+                    loadingText.setVisibility(View.VISIBLE);
+                }
+            }
+
+            @Override
+            public void onPlayerError(PlaybackException error) {
+                goBack();
+                showMessage("Erro: " + error.getMessage(), true);
+            }
+        });
+
+        HlsMediaSource hlsSource = new HlsMediaSource.Factory(
+                new DefaultHttpDataSource.Factory()
+                        .setConnectTimeoutMs(10000)
+                        .setReadTimeoutMs(10000)
+                        .setAllowCrossProtocolRedirects(true)
+        ).createMediaSource(MediaItem.fromUri(Uri.parse(streamUrl)));
+
+        player.setMediaSource(hlsSource);
         player.setPlayWhenReady(true);
         player.prepare();
 
@@ -168,6 +207,7 @@ public class MainActivity extends Activity {
     private void goBack() {
         stopPlayer();
         playerView.setVisibility(View.GONE);
+        loadingText.setVisibility(View.GONE);
         loginView.setVisibility(View.VISIBLE);
         codeInput.requestFocus();
     }
