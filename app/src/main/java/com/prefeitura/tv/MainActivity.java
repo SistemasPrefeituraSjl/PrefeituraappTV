@@ -36,8 +36,8 @@ public class MainActivity extends Activity {
 
     private static final String SESSION_URL =
             "https://sistemasprefeiturasjl.github.io/TV/session.json";
-    private static final int MAX_RETRIES = 10;
-    private static final long RETRY_DELAY_MS = 3000;
+    private static final int MAX_RETRIES = 15;
+    private static final long RETRY_DELAY_MS = 4000;
 
     private View loginView;
     private View playerView;
@@ -52,9 +52,11 @@ public class MainActivity extends Activity {
     private boolean frozen = false;
     private boolean triedSoftware = false;
     private int retryCount = 0;
+    private boolean retrying = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private Runnable pollRunnable;
+    private Runnable retryRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -113,6 +115,7 @@ public class MainActivity extends Activity {
 
                 runOnUiThread(() -> {
                     retryCount = 0;
+                    retrying = false;
                     startPlayer(streamUrl);
                 });
             } catch (Exception e) {
@@ -133,10 +136,11 @@ public class MainActivity extends Activity {
         lastStreamUrl = streamUrl;
         loginView.setVisibility(View.GONE);
         playerView.setVisibility(View.VISIBLE);
+        loadingText.setText("Carregando...");
         loadingText.setVisibility(View.VISIBLE);
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(3000, 15000, 1000, 2000)
+                .setBufferDurationsMs(5000, 30000, 2000, 4000)
                 .build();
 
         ExoPlayer.Builder builder = new ExoPlayer.Builder(this)
@@ -160,8 +164,12 @@ public class MainActivity extends Activity {
                 if (state == Player.STATE_READY) {
                     loadingText.setVisibility(View.GONE);
                     retryCount = 0;
+                    retrying = false;
                 } else if (state == Player.STATE_BUFFERING) {
-                    loadingText.setVisibility(View.VISIBLE);
+                    if (!retrying) {
+                        loadingText.setText("Carregando...");
+                        loadingText.setVisibility(View.VISIBLE);
+                    }
                 }
             }
 
@@ -172,10 +180,17 @@ public class MainActivity extends Activity {
                     startPlayer(lastStreamUrl);
                     return;
                 }
-                retryReconnect();
+                retrySource();
             }
         });
 
+        loadSource(streamUrl);
+        startPolling();
+    }
+
+    @OptIn(markerClass = UnstableApi.class)
+    private void loadSource(String streamUrl) {
+        if (player == null) return;
         HlsMediaSource hlsSource = new HlsMediaSource.Factory(
                 new DefaultHttpDataSource.Factory()
                         .setConnectTimeoutMs(15000)
@@ -186,24 +201,34 @@ public class MainActivity extends Activity {
         player.setMediaSource(hlsSource);
         player.setPlayWhenReady(true);
         player.prepare();
-
-        startPolling();
     }
 
-    private void retryReconnect() {
+    private void retrySource() {
         if (retryCount >= MAX_RETRIES) {
             goBack();
             showMessage("Conexao perdida. Tente novamente.", true);
             retryCount = 0;
+            retrying = false;
             return;
         }
         retryCount++;
+        retrying = true;
         loadingText.setText("Reconectando... (" + retryCount + "/" + MAX_RETRIES + ")");
         loadingText.setVisibility(View.VISIBLE);
-        handler.postDelayed(() -> {
-            if (lastStreamUrl.isEmpty()) return;
-            startPlayer(lastStreamUrl);
-        }, RETRY_DELAY_MS);
+
+        cancelRetry();
+        retryRunnable = () -> {
+            if (player == null || lastStreamUrl.isEmpty()) return;
+            loadSource(lastStreamUrl);
+        };
+        handler.postDelayed(retryRunnable, RETRY_DELAY_MS);
+    }
+
+    private void cancelRetry() {
+        if (retryRunnable != null) {
+            handler.removeCallbacks(retryRunnable);
+            retryRunnable = null;
+        }
     }
 
     private void startPolling() {
@@ -245,6 +270,7 @@ public class MainActivity extends Activity {
     }
 
     private void stopPlayer() {
+        cancelRetry();
         stopPolling();
         if (player != null) {
             player.release();
