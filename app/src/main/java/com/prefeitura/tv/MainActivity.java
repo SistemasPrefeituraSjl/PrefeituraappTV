@@ -18,6 +18,7 @@ import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
 import androidx.media3.ui.PlayerView;
@@ -45,7 +46,9 @@ public class MainActivity extends Activity {
     private ExoPlayer player;
 
     private String serverUrl = "";
+    private String lastStreamUrl = "";
     private boolean frozen = false;
+    private boolean triedSoftware = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private Runnable pollRunnable;
@@ -112,6 +115,7 @@ public class MainActivity extends Activity {
 
     @OptIn(markerClass = UnstableApi.class)
     private void startPlayer(String streamUrl) {
+        lastStreamUrl = streamUrl;
         loginView.setVisibility(View.GONE);
         playerView.setVisibility(View.VISIBLE);
         loadingText.setVisibility(View.VISIBLE);
@@ -120,9 +124,17 @@ public class MainActivity extends Activity {
                 .setBufferDurationsMs(2000, 8000, 500, 1000)
                 .build();
 
-        player = new ExoPlayer.Builder(this)
-                .setLoadControl(loadControl)
-                .build();
+        ExoPlayer.Builder builder = new ExoPlayer.Builder(this)
+                .setLoadControl(loadControl);
+
+        if (triedSoftware) {
+            DefaultRenderersFactory renderersFactory = new DefaultRenderersFactory(this)
+                    .setEnableDecoderFallback(true)
+                    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER);
+            builder.setRenderersFactory(renderersFactory);
+        }
+
+        player = builder.build();
 
         exoPlayerView.setPlayer(player);
         exoPlayerView.setUseController(false);
@@ -139,7 +151,14 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPlayerError(PlaybackException error) {
+                if (!triedSoftware) {
+                    triedSoftware = true;
+                    stopPlayer();
+                    startPlayer(lastStreamUrl);
+                    return;
+                }
                 goBack();
+                triedSoftware = false;
                 showMessage("Erro: " + error.getMessage(), true);
             }
         });
