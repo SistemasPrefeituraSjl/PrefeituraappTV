@@ -100,10 +100,19 @@ public class MainActivity extends Activity {
                 String streamPath = session.optString("stream_path", "/hls/stream.m3u8");
                 String streamUrl = serverUrl + streamPath;
 
+                // Verify stream is reachable before playing
+                try {
+                    httpGet(streamUrl);
+                } catch (Exception ve) {
+                    runOnUiThread(() -> showMessage(
+                            "Stream inacessivel: " + serverUrl, true));
+                    return;
+                }
+
                 runOnUiThread(() -> startPlayer(streamUrl));
             } catch (Exception e) {
                 runOnUiThread(() -> showMessage(
-                        "Erro ao conectar. Verifique a conexao.", true));
+                        "Erro ao conectar: " + e.getMessage(), true));
             }
         });
     }
