@@ -47,17 +47,21 @@ public class MainActivity extends Activity {
 
     private String serverUrl = "";
     private String lastStreamUrl = "";
+    private String enteredCode = "";
     private boolean frozen = false;
     private boolean triedSoftware = false;
-    private int errorCount = 0;
+    private int reconnectAttempts = 0;
+    private boolean isReconnecting = false;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
     private Runnable pollRunnable;
+    private Runnable reconnectRunnable;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 
         loginView = findViewById(R.id.loginView);
         playerView = findViewById(R.id.playerView);
@@ -83,6 +87,7 @@ public class MainActivity extends Activity {
             showMessage("Digite os 6 numeros do codigo.", true);
             return;
         }
+        enteredCode = code;
         showMessage("Conectando...", false);
 
         executor.execute(() -> {
@@ -91,7 +96,7 @@ public class MainActivity extends Activity {
                 JSONObject session = new JSONObject(json);
 
                 if (!session.optBoolean("active", false)
-                        || !code.equals(session.optString("code"))) {
+                        || !enteredCode.equals(session.optString("code"))) {
                     runOnUiThread(() -> showMessage(
                             "Codigo invalido ou transmissao nao iniciada.", true));
                     return;
@@ -100,14 +105,6 @@ public class MainActivity extends Activity {
                 serverUrl = session.getString("url");
                 String streamPath = session.optString("stream_path", "/hls/stream.m3u8");
                 String streamUrl = serverUrl + streamPath;
-
-                try {
-                    httpGet(streamUrl);
-                } catch (Exception ve) {
-                    runOnUiThread(() -> showMessage(
-                            "Stream inacessivel: " + serverUrl, true));
-                    return;
-                }
 
                 runOnUiThread(() -> startPlayer(streamUrl));
             } catch (Exception e) {
@@ -125,12 +122,16 @@ public class MainActivity extends Activity {
     @OptIn(markerClass = UnstableApi.class)
     private void startPlayer(String streamUrl) {
         lastStreamUrl = streamUrl;
+        isReconnecting = false;
         loginView.setVisibility(View.GONE);
         playerView.setVisibility(View.VISIBLE);
         loadingText.setVisibility(View.VISIBLE);
+        loadingText.setText("Carregando...");
+
+        releasePlayer();
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(2000, 8000, 500, 1000)
+                .setBufferDurationsMs(4000, 15000, 1500, 2500)
                 .build();
 
         ExoPlayer.Builder builder = new ExoPlayer.Builder(this)
@@ -153,9 +154,10 @@ public class MainActivity extends Activity {
             public void onPlaybackStateChanged(int state) {
                 if (state == Player.STATE_READY) {
                     loadingText.setVisibility(View.GONE);
-                    errorCount = 0;
+                    reconnectAttempts = 0;
+                    triedSoftware = false;
                 } else if (state == Player.STATE_BUFFERING) {
-                    loadingText.setVisibility(View.VISIBLE);
+                    if (!isReconnecting) loadingText.setVisibility(View.VISIBLE);
                 }
             }
 
@@ -163,27 +165,18 @@ public class MainActivity extends Activity {
             public void onPlayerError(PlaybackException error) {
                 if (!triedSoftware) {
                     triedSoftware = true;
-                    stopPlayer();
+                    releasePlayer();
                     startPlayer(lastStreamUrl);
                     return;
                 }
-                if (errorCount < 2) {
-                    errorCount++;
-                    stopPlayer();
-                    handler.postDelayed(() -> startPlayer(lastStreamUrl), 2000);
-                    return;
-                }
-                errorCount = 0;
-                goBack();
-                triedSoftware = false;
-                showMessage("Erro: " + error.getMessage(), true);
+                scheduleReconnect();
             }
         });
 
         HlsMediaSource hlsSource = new HlsMediaSource.Factory(
                 new DefaultHttpDataSource.Factory()
-                        .setConnectTimeoutMs(10000)
-                        .setReadTimeoutMs(10000)
+                        .setConnectTimeoutMs(15000)
+                        .setReadTimeoutMs(15000)
                         .setAllowCrossProtocolRedirects(true)
         ).createMediaSource(MediaItem.fromUri(Uri.parse(streamUrl)));
 
@@ -194,17 +187,65 @@ public class MainActivity extends Activity {
         startPolling();
     }
 
+    private void scheduleReconnect() {
+        isReconnecting = true;
+        releasePlayer();
+        stopPolling();
+
+        long delay = Math.min((long)(2000 * Math.pow(1.5, reconnectAttempts)), 10000);
+        reconnectAttempts++;
+
+        loadingText.setVisibility(View.VISIBLE);
+        loadingText.setText("Reconectando...");
+
+        if (reconnectRunnable != null) handler.removeCallbacks(reconnectRunnable);
+        reconnectRunnable = () -> {
+            if (!isReconnecting) return;
+            executor.execute(() -> {
+                try {
+                    String json = httpGet(SESSION_URL + "?t=" + System.currentTimeMillis());
+                    JSONObject session = new JSONObject(json);
+
+                    if (!session.optBoolean("active", false)) {
+                        runOnUiThread(() -> {
+                            loadingText.setText("Aguardando transmissao...");
+                            scheduleReconnect();
+                        });
+                        return;
+                    }
+
+                    if (!enteredCode.isEmpty() && !enteredCode.equals(session.optString("code"))) {
+                        runOnUiThread(MainActivity.this::goBack);
+                        return;
+                    }
+
+                    serverUrl = session.getString("url");
+                    String streamPath = session.optString("stream_path", "/hls/stream.m3u8");
+                    String newStreamUrl = serverUrl + streamPath;
+
+                    runOnUiThread(() -> startPlayer(newStreamUrl));
+                } catch (Exception e) {
+                    runOnUiThread(() -> scheduleReconnect());
+                }
+            });
+        };
+        handler.postDelayed(reconnectRunnable, delay);
+    }
+
     private void startPolling() {
         stopPolling();
+        int[] networkFails = {0};
         pollRunnable = new Runnable() {
             @Override
             public void run() {
+                if (player == null) return;
                 executor.execute(() -> {
                     try {
                         String json = httpGet(
                                 serverUrl + "/api/session?t=" + System.currentTimeMillis());
                         JSONObject s = new JSONObject(json);
                         boolean isFrozen = s.optBoolean("frozen", false);
+                        networkFails[0] = 0;
                         runOnUiThread(() -> {
                             if (player == null) return;
                             if (isFrozen && !frozen) {
@@ -216,12 +257,13 @@ public class MainActivity extends Activity {
                             }
                         });
                     } catch (Exception ignored) {
+                        networkFails[0]++;
                     }
                 });
-                handler.postDelayed(this, 800);
+                handler.postDelayed(this, 1500);
             }
         };
-        handler.postDelayed(pollRunnable, 800);
+        handler.postDelayed(pollRunnable, 1500);
     }
 
     private void stopPolling() {
@@ -232,7 +274,7 @@ public class MainActivity extends Activity {
         frozen = false;
     }
 
-    private void stopPlayer() {
+    private void releasePlayer() {
         stopPolling();
         if (player != null) {
             player.release();
@@ -241,7 +283,14 @@ public class MainActivity extends Activity {
     }
 
     private void goBack() {
-        stopPlayer();
+        isReconnecting = false;
+        reconnectAttempts = 0;
+        triedSoftware = false;
+        if (reconnectRunnable != null) {
+            handler.removeCallbacks(reconnectRunnable);
+            reconnectRunnable = null;
+        }
+        releasePlayer();
         playerView.setVisibility(View.GONE);
         loadingText.setVisibility(View.GONE);
         loginView.setVisibility(View.VISIBLE);
@@ -261,7 +310,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onStop() {
         super.onStop();
-        stopPlayer();
+        releasePlayer();
     }
 
     @Override
