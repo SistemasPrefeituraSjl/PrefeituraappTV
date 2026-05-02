@@ -131,7 +131,7 @@ public class MainActivity extends Activity {
         releasePlayer();
 
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(4000, 15000, 1500, 2500)
+                .setBufferDurationsMs(2000, 6000, 1000, 1500)
                 .build();
 
         ExoPlayer.Builder builder = new ExoPlayer.Builder(this)
@@ -157,7 +157,7 @@ public class MainActivity extends Activity {
                     reconnectAttempts = 0;
                     triedSoftware = false;
                 } else if (state == Player.STATE_BUFFERING) {
-                    if (!isReconnecting) loadingText.setVisibility(View.VISIBLE);
+                    // Only show loading if already reconnecting (expected) — silent otherwise
                 }
             }
 
@@ -173,12 +173,24 @@ public class MainActivity extends Activity {
             }
         });
 
+        MediaItem mediaItem = new MediaItem.Builder()
+                .setUri(Uri.parse(streamUrl))
+                .setLiveConfiguration(
+                        new MediaItem.LiveConfiguration.Builder()
+                                .setTargetOffsetMs(2000)
+                                .setMaxOffsetMs(5000)
+                                .setMinPlaybackSpeed(0.97f)
+                                .setMaxPlaybackSpeed(1.03f)
+                                .build()
+                )
+                .build();
+
         HlsMediaSource hlsSource = new HlsMediaSource.Factory(
                 new DefaultHttpDataSource.Factory()
                         .setConnectTimeoutMs(15000)
                         .setReadTimeoutMs(15000)
                         .setAllowCrossProtocolRedirects(true)
-        ).createMediaSource(MediaItem.fromUri(Uri.parse(streamUrl)));
+        ).createMediaSource(mediaItem);
 
         player.setMediaSource(hlsSource);
         player.setPlayWhenReady(true);
@@ -195,19 +207,24 @@ public class MainActivity extends Activity {
         long delay = Math.min((long)(2000 * Math.pow(1.5, reconnectAttempts)), 10000);
         reconnectAttempts++;
 
-        loadingText.setVisibility(View.VISIBLE);
-        loadingText.setText("Reconectando...");
+        // Only show "Reconectando" after a few failures so minor hiccups are silent
+        if (reconnectAttempts >= 3) {
+            loadingText.setVisibility(View.VISIBLE);
+            loadingText.setText("Reconectando...");
+        }
 
         if (reconnectRunnable != null) handler.removeCallbacks(reconnectRunnable);
         reconnectRunnable = () -> {
             if (!isReconnecting) return;
             executor.execute(() -> {
                 try {
+                    // Re-fetch session to get current URL in case tunnel restarted
                     String json = httpGet(SESSION_URL + "?t=" + System.currentTimeMillis());
                     JSONObject session = new JSONObject(json);
 
                     if (!session.optBoolean("active", false)) {
                         runOnUiThread(() -> {
+                            loadingText.setVisibility(View.VISIBLE);
                             loadingText.setText("Aguardando transmissao...");
                             scheduleReconnect();
                         });
