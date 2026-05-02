@@ -173,24 +173,12 @@ public class MainActivity extends Activity {
             }
         });
 
-        MediaItem mediaItem = new MediaItem.Builder()
-                .setUri(Uri.parse(streamUrl))
-                .setLiveConfiguration(
-                        new MediaItem.LiveConfiguration.Builder()
-                                .setTargetOffsetMs(2000)
-                                .setMaxOffsetMs(5000)
-                                .setMinPlaybackSpeed(0.97f)
-                                .setMaxPlaybackSpeed(1.03f)
-                                .build()
-                )
-                .build();
-
         HlsMediaSource hlsSource = new HlsMediaSource.Factory(
                 new DefaultHttpDataSource.Factory()
                         .setConnectTimeoutMs(15000)
                         .setReadTimeoutMs(15000)
                         .setAllowCrossProtocolRedirects(true)
-        ).createMediaSource(mediaItem);
+        ).createMediaSource(MediaItem.fromUri(Uri.parse(streamUrl)));
 
         player.setMediaSource(hlsSource);
         player.setPlayWhenReady(true);
